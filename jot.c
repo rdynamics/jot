@@ -123,14 +123,19 @@ int main(int argc, char** argv) {
     
     printf("Required height: %d\n", height);
     
-    size_t image_size = 1;
+    //size_t image_size = 1;
     /* Find smallest power-of-two image size */
-    while(image_size < total || image_size < height) image_size *= 2;
+    //while(image_size < total || image_size < height) image_size *= 2;
     
-    printf("Required image size: %d\n", image_size);
+    size_t image_width = 1;
+    size_t image_height = 1;
+    while(image_width < total) image_width *= 2;
+    while(image_height < height) image_height *= 2;
+    
+    printf("Required image size: %d %d\n", image_width, image_height);
     
     /* Image data */
-    size_t image_space = image_size * image_size * 4;
+    size_t image_space = image_width * image_height * 4;
     unsigned char* data = malloc(sizeof(unsigned char) * image_space);
     
     size_t x;
@@ -153,7 +158,7 @@ int main(int argc, char** argv) {
                 for(y = 0; y < inputs[j].height; ++y) {
                     for(x = 0; x < i; ++x) {
                         for(size_t comp = 0; comp < 4; ++comp) {
-                            data[4 * ((x + width) + ((y + height) * image_size)) + comp] = inputs[j].data[4 * (x + (y * i)) + comp];
+                            data[4 * ((x + width) + ((y + height) * image_width)) + comp] = inputs[j].data[4 * (x + (y * i)) + comp];
                         }
                     }
                 }
@@ -170,33 +175,9 @@ int main(int argc, char** argv) {
     }
     
     puts("Writing code...");
-    fprintf(out, "#include <GLFW/glfw3.h>\n\nGLuint load_image_%s() {\n    unsigned char data[] = { \n", set_name);
+    fputs("#include <GLFW/glfw3.h>\n\n#include \"images_diffuse.h\"\n\n", out);
     
-    fputs("Writing image...", stdout);
-    
-    for(i = 0; i < image_space; ++i) {
-        fprintf(out, "%#x", data[i]);
-        
-        if(i < image_space - 1) {
-            fputs(", ", out);
-        }
-        
-        if(i % 20) fputc('.', stdout);
-    }
-    
-    fputc('\n', stdout);
-    
-    puts("Wrote image");
-    
-    puts("Writing code...");
-    
-    fprintf(out, "\n    }\n    glEnable(GL_TEXTURE_2D);\n    GLuint tex;\n    glGenTextures(1, &tex);\n    glBindTexture(GL_TEXTURE_2D, tex);\n\n    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, %d, %d, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);\n\n    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);\n    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);\n    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);\n    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);\n\n    return tex;\n}", image_size, image_size);
-    
-    fflush(out);
-    
-    fprintf(header, "#ifndef IMAGE_INDEX_%s\n#define IMAGE_INDEX_%s\n\n#include <retrodynamics/index>\n\n", set_name, set_name);
-    
-    puts("Writing index...");
+    puts("Writing sprite data...");
     
     for(i = 0; i < argc; ++i) {        
         char* name = argv[i];
@@ -207,22 +188,78 @@ int main(int argc, char** argv) {
         while(name[j] != '.') --j;
         name[j] = '\0';
         
+        char *jot = malloc((j + 5) * sizeof(char));
+        snprintf(jot, (j + 5), "%s.jot", name);
+        
+        int frames = 1;
+        FILE *jotfile = fopen(jot, "r");
+        
+        printf("Looking for jotfile %s\n", jot);
+        
+        if(jotfile) {
+            puts("Got a jotfile.");
+            fscanf(jotfile, "%d", &frames);
+            fclose(jotfile);
+        }
+        
+        float frame_height = convert(image_height, inputs[i].height) / frames;
+        int sprite_height = inputs[i].height / frames;
+        
         while(name[j] != '/' && name[j] != '\\') {
             --j;
             if(j == 0) break;
         }
         name = name + j;
         
-        fprintf(header, "sprite sprite_%s = { %g, %g, %g, %g, %d, %d };\n", name,
-            convert(image_size, inputs[i].x),
-            convert(image_size, inputs[i].y),
-            convert(image_size, inputs[i].x + inputs[i].width),
-            convert(image_size, inputs[i].y + inputs[i].height),
+        fprintf(out, "sprite sprite_%s = { %g, %g, %g, %g, %d, %d, %d, %g };\n", name,
+            convert(image_width, inputs[i].x),
+            convert(image_height, inputs[i].y),
+            convert(image_width, inputs[i].x + inputs[i].width),
+            convert(image_height, inputs[i].y + sprite_height),
             inputs[i].width,
-            inputs[i].height
+            sprite_height,
+            frames,
+            frame_height
         );
         
         free(inputs[i].data);
+    }
+    
+    fputs("static unsigned char data[] = { \n", out);
+    
+    fputs("Writing image...", stdout);
+    
+    size_t divisor = image_space / 100;
+    
+    for(i = 0; i < image_space; ++i) {
+        fprintf(out, "%#x", data[i]);
+        
+        if(i < image_space - 1) {
+            fputs(", ", out);
+        }
+        
+        if(!(i % divisor)) fputc('.', stdout);
+    }
+    
+    fputc('\n', stdout);
+    
+    puts("Wrote image");
+    
+    puts("Writing code...");
+    
+    fprintf(out, "\n};\nGLuint load_image_%s() {\n", set_name);
+    fprintf(out, "    glEnable(GL_TEXTURE_2D);\n    GLuint tex;\n    glGenTextures(1, &tex);\n    glBindTexture(GL_TEXTURE_2D, tex);\n\n    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, %d, %d, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);\n\n    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);\n    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);\n    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);\n    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);\n\n    return tex;\n}", image_width, image_height);
+    
+    fflush(out);
+    
+    fprintf(header, "#ifndef IMAGE_INDEX_%s\n#define IMAGE_INDEX_%s\n\n#include \"graphics.h\"\n\n", set_name, set_name);
+    
+    puts("Writing index...");
+    
+    for(i = 0; i < argc; ++i) {        
+        char* name = argv[i];
+        
+        fprintf(header, "extern sprite sprite_%s;\n", name);
     }
     
     fputs("\n#endif", header);
